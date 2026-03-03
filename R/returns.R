@@ -1,32 +1,28 @@
-# Intent: compute log returns per ticker and return a wide matrix ready for simulation
-
+# Intent: compute log returns and reshape into a clean wide matrix for simulation
 suppressPackageStartupMessages({
-    library(dplyr) # for data manipulation
-    library(tidyr) # for pivoting data
+  library(dplyr)
+  library(tidyr)
 })
 
-## 
 compute_log_returns <- function(prices_tbl) {
-    prices_tbl %>% #
-        group_by(ticker) %>% ## 
-        arrange(date, .by_group = TRUE) %>%
-        mutate(ret = log(price / dplyr::lag(price))) %>%
-        ungroup() %>% 
-        filter(!is.na(ret)) ## Remove the first row per ticker which will have NA return
-  
+  prices_tbl %>%
+    dplyr::group_by(ticker) %>%
+    dplyr::arrange(date, .by_group = TRUE) %>%
+    dplyr::mutate(ret = log(price / dplyr::lag(price))) %>%
+    dplyr::ungroup() %>%
+    dplyr::filter(!is.na(ret))
 }
 
-returns_wide_matrix <- function(returns_tbl) { 
-    wide <- returns_tbl %>%
-        select(date, ticker, ret) %>%
-        tidyr::pivot_wider(names_from = ticker, values_from = ret) %>%
-        arrange(date)  ## Ensure rows are ordered by date for time series analysis
-    
-    mat <- as.matrix(wide %>% select(-date)) ## Convert to matrix format for simulation
-    rownames(mat) <- as.character(wide$date) ## Set row names to dates for reference
+returns_wide_matrix <- function(returns_tbl) {
+  wide <- returns_tbl %>%
+    dplyr::select(date, ticker, ret) %>%
+    tidyr::pivot_wider(names_from = ticker, values_from = ret) %>%
+    dplyr::arrange(date)
 
-      # Guardrails: remove any rows with missing returns (misaligned tickers)
-    mat <- mat[stats::complete.cases(mat), , drop = FALSE]
-    mat ## Return the wide matrix of log returns with dates as row names
+  mat <- as.matrix(wide %>% dplyr::select(-date))
+  rownames(mat) <- as.character(wide$date)
+
+  # Guardrail: drop misaligned rows (e.g., missing returns for a ticker on a given date)
+  mat <- mat[stats::complete.cases(mat), , drop = FALSE]
+  mat
 }
-
