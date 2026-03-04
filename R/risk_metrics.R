@@ -7,7 +7,11 @@ var_cvar <- function(pnl, alpha = 0.95) {
 
     losses <- -pnl ## Convert PnL to losses for VaR/CVaR calculation
     var <- as.numeric(stats::quantile(losses, probs = alpha,type = 7, names = FALSE)) ## VaR at the alpha level
-    cvar <- mean(losses[losses >= var]) ## CVaR is the average loss in the tail beyond VaR
+    tail_losses <- losses[losses >= var]
+    cvar <- mean(tail_losses) ## CVaR is the average loss in the tail beyond VaR
+    if (is.nan(cvar)) {
+        cvar <- var
+    }
 
-    list(VaR = var, CVar = cvar) ## Return a list with both metrics
+    list(VaR = var, CVaR = cvar, CVar = cvar) ## Keep CVar for backward compatibility
 }
