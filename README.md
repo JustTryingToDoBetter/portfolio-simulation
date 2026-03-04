@@ -8,6 +8,9 @@ A comprehensive R-based tool for portfolio risk simulation and analysis. This pr
 - **Return Calculation**: Compute logarithmic returns from price data
 - **Portfolio Simulation**: Generate Monte Carlo simulations of portfolio returns using multivariate normal distribution
 - **Risk Metrics**: Calculate VaR and CVaR for portfolio risk assessment
+- **Rolling VaR Backtest**: Evaluate VaR forecasts with rolling historical windows and breach rate
+- **Deterministic Config**: Centralized runtime config with deterministic seeding for reproducibility
+- **Caching**: Yahoo fetch results cached locally with configurable TTL
 - **Modular Design**: Clean, organized code structure with separate modules for each functionality
 
 ## Installation
@@ -32,23 +35,35 @@ source("R/data_fetch.R")
 source("R/sim_mc.R")
 source("R/returns.R")
 source("R/risk_metrics.R")
+source("R/backtest.R")
+source("R/config.R")
 library(dplyr)
 
-# Define portfolio
-tickers <- c("AAPL", "MSFT", "GOOGL", "AMZN")
-weights <- c(0.25, 0.25, 0.25, 0.25)
+# Load deterministic config
+cfg <- load_config()
+set_deterministic_seed(cfg$seed)
 
 # Fetch data and compute returns
-prices <- fetch_prices_yahoo(tickers, from = "2019-01-01")
+prices <- fetch_prices_yahoo(
+   cfg$tickers,
+   from = cfg$from,
+   cache_dir = cfg$cache_dir,
+   cache_max_age_hours = cfg$cache_max_age_hours
+)
 rets <- compute_log_returns(prices)
 mat <- returns_wide_matrix(rets)
 
 # Simulate portfolio
-sim_port <- simulate_portfolio_mvn(mat, weights, n_sims = 50000)
+sim_port <- simulate_portfolio_mvn(mat, cfg$weights, n_sims = cfg$n_sims)
 
 # Calculate risk metrics
-risk <- var_cvar(sim_port, alpha = 0.95)
+risk <- var_cvar(sim_port, alpha = cfg$alpha)
 print(risk)
+
+# Rolling VaR backtest
+hist_port_rets <- as.numeric(mat %*% cfg$weights)
+bt <- rolling_var_backtest(hist_port_rets, window = cfg$var_window, alpha = cfg$alpha)
+print(backtest_summary(bt, cfg$alpha))
 ```
 
 ## Project Structure
@@ -79,6 +94,16 @@ portfolio-simulation/
 - `returns_wide_matrix()`: Converts returns to wide matrix format for simulation
 - `simulate_portfolio_mvn()`: Runs Monte Carlo simulation using multivariate normal distribution
 - `var_cvar()`: Computes Value at Risk and Conditional VaR
+- `rolling_var_backtest()`: Performs rolling-window VaR backtest
+- `backtest_summary()`: Reports breach-rate diagnostics for the backtest
+
+## Tests
+
+Run basic unit tests:
+
+```r
+source("tests/run_tests.R")
+```
 
 ## Dependencies
 
