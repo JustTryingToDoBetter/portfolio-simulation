@@ -2,7 +2,8 @@
 
 log_message <- function(level, ..., .sep = "") {
     msg <- paste0(...)
-    cat(sprintf("[%s] %s %s\n", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), level, msg), sep = .sep)
+    ts <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
+    cat(sprintf("ts=%s level=%s msg=\"%s\"\n", ts, level, msg), sep = .sep)
 }
 
 log_info <- function(..., .sep = "") {

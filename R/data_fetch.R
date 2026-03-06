@@ -50,7 +50,7 @@ fetch_prices_yahoo <- function(
         xt <- env[[sym]]
         adj <- Ad(xt)
         tibble(
-            date = as.Date(xts::index(adj)),
+            date = as.Date(zoo::index(adj)),
             ticker = sym,
             price = as.numeric(adj)
         )
@@ -60,6 +60,31 @@ fetch_prices_yahoo <- function(
         arrange(.data$ticker, .data$date) %>%
         filter(!is.na(.data$price))
 
+    saveRDS(prices, cache_file)
+    prices
+}
+
+fetch_prices_yahoo_cached <- function(tickers, from, cache_dir = "data/cache") {
+    if (!is.character(tickers) || length(tickers) < 1) {
+        stop("`tickers` must be a non-empty character vector.", call. = FALSE)
+    }
+    if (!is.character(from) || length(from) != 1 || nchar(from) == 0) {
+        stop("`from` must be a single non-empty date string (e.g. '2019-01-01').", call. = FALSE)
+    }
+    if (!is.character(cache_dir) || length(cache_dir) != 1 || nchar(cache_dir) == 0) {
+        stop("`cache_dir` must be a non-empty path string.", call. = FALSE)
+    }
+
+    dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+
+    key <- paste(sort(unique(tickers)), collapse = "_")
+    cache_file <- file.path(cache_dir, sprintf("prices_%s_from_%s.rds", key, from))
+
+    if (file.exists(cache_file)) {
+        return(readRDS(cache_file))
+    }
+
+    prices <- fetch_prices_yahoo(tickers = tickers, from = from, cache_dir = cache_dir)
     saveRDS(prices, cache_file)
     prices
 }

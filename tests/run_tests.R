@@ -1,3 +1,4 @@
+
 test_files <- list.files("tests", pattern = "^test_.*\\.R$", full.names = TRUE)
 
 if (length(test_files) == 0) {

@@ -1,8 +1,12 @@
+
+
 risk_metrics_env <- new.env(parent = baseenv())
 backtest_env <- new.env(parent = baseenv())
 
 source("R/risk_metrics.R", local = risk_metrics_env)
+source("R/sim_mc.R", local = backtest_env)
 source("R/backtest.R", local = backtest_env)
+
 
 expect_true <- function(condition, message = "Expectation failed") {
   if (!isTRUE(condition)) {
