@@ -1,6 +1,6 @@
 # Intent: rolling VaR backtesting for portfolio models with compatibility wrappers
 
-source("R/globals.R")
+source("R/sim_mc.R")
 
 backtest_var <- function(returns_mat, weights, window = 252, alpha = 0.95, model = "bootstrap", n_sims = 100000) {
 	if (!is.matrix(returns_mat) || nrow(returns_mat) <= window) {

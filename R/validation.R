@@ -1,11 +1,14 @@
 # Intent: statistical validation helpers for VaR backtests
 
-kupiec_uc_test <- function(breaches, alpha = 0.95) {
+kupiec_uc_test <- function(breaches, alpha = 0.95, eps = 1e-12) {
     if (!is.logical(breaches)) {
         stop("`breaches` must be a logical vector.", call. = FALSE)
     }
     if (!is.numeric(alpha) || length(alpha) != 1 || alpha <= 0 || alpha >= 1) {
         stop("`alpha` must be a scalar in (0,1).", call. = FALSE)
+    }
+    if (!is.numeric(eps) || length(eps) != 1 || eps <= 0 || eps >= 0.5) {
+        stop("`eps` must be a scalar in (0, 0.5).", call. = FALSE)
     }
 
     n <- length(breaches)
@@ -17,8 +20,6 @@ kupiec_uc_test <- function(breaches, alpha = 0.95) {
     expected <- n * (1 - alpha)
     p <- x / n
     p0 <- 1 - alpha
-    eps <- 1e-12
-
     p <- min(max(p, eps), 1 - eps)
     p0 <- min(max(p0, eps), 1 - eps)
 
