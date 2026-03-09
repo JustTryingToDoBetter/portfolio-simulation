@@ -1,6 +1,9 @@
 # Intent: time blocks and return both value + elapsed seconds
 
 time_it <- function(label, expr) {
+    if (!is.character(label) || length(label) != 1 || nchar(label) == 0) {
+        stop("`label` must be a non-empty string.", call. = FALSE)
+    }
 
     t0 <- proc.time()[["elapsed"]]
     value <- force(expr)

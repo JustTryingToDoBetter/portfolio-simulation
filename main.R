@@ -7,7 +7,6 @@ source("R/validation.R")
 source("R/logging.R")
 source("R/benchmark.R")
 source("R/garch.R")
-source("R/globals.R")
 
 set.seed(42)
 
@@ -17,19 +16,19 @@ if (!(mode %in% c("quick", "full"))) {
     mode <- "full"
 }
 
-cfg <- list( 
+cfg <- list(
     tickers = c("AAPL", "MSFT", "GOOGL", "AMZN"),
     weights = c(0.25, 0.25, 0.25, 0.25),
     from = "2019-01-01",
-    alpha = 0.95,
-    n_sims = if (identical(mode, "quick")) 10000L else 50000L,
+    alpha = 0.95, ## confidence level for VaR/CVaR
+    n_sims = if (identical(mode, "quick")) 10000L else 50000L, ## number of Monte Carlo simulations for risk estimation
     backtest_window = 252L,
-    backtest_sims = if (identical(mode, "quick")) 20000L else 100000L,
+    backtest_sims = if (identical(mode, "quick")) 20000L else 100000L, ## simulations for rolling VaR backtest (higher for more stable estimates)
     cache_dir = "data/cache",
-    model = "bootstrap",
-    vol_scale_baseline = 1.0,
-    vol_scale_stress = 1.25,
-    enable_garch = FALSE
+    model = "bootstrap", ## "bootstrap" or "mvn" for backtest
+    vol_scale_baseline = 1.0, ## no stress
+    vol_scale_stress = 1.25, ## 25% vol increase for stress testing
+    enable_garch = FALSE 
 )
 
 if (!is.character(cfg$tickers) || length(cfg$tickers) < 1) {
