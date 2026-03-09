@@ -1,4 +1,4 @@
-global# plumber API for risk metrics
+# plumber API for risk metrics
 # Run with: plumber::pr('api/plumber.R')$run(port = 8000)
 
 source("R/data_fetch.R")
