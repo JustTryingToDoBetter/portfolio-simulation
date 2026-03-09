@@ -55,6 +55,12 @@ pr <- plumber::pr("api/plumber.R")
 pr$run(port = 8000)
 ```
 
+From terminal:
+
+```bash
+R -q -e 'pr <- plumber::pr("api/plumber.R"); pr$run(port = 8000, host = "0.0.0.0")'
+```
+
 Endpoints:
 - `GET /health`
 - `POST /risk` with payload fields: `tickers`, `weights`, `from`, `alpha`, `n_sims`, `model`, `vol_scale`
@@ -63,6 +69,12 @@ Shiny app:
 
 ```r
 source("app/app.R")
+```
+
+From terminal:
+
+```bash
+R -q -e 'shiny::runApp("app", host = "0.0.0.0", port = 3838)'
 ```
 
 ## Outputs
