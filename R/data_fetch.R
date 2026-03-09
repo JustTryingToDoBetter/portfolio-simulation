@@ -51,7 +51,7 @@ fetch_prices_yahoo <- function(
 
     # Extract Adjusted close for each ticker, align by date
     price_list <- lapply(tickers, function(sym) {
-        xt <- env[[sym]]
+        xt <- env[[sym]] ## 
         adj <- Ad(xt)
         tibble(
             date = as.Date(zoo::index(adj)),

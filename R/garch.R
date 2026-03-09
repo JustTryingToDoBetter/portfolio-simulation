@@ -9,6 +9,7 @@ fit_garch_series <- function(x) {
         stop("Package `rugarch` is required for GARCH. Install it or set `enable_garch = FALSE`.", call. = FALSE)
     }
 
+    ## Using a simple sGARCH(1,1) model with normal errors for demonstration. More complex specs can be used as needed.
     spec <- rugarch::ugarchspec(
         variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
         mean.model = list(armaOrder = c(0, 0), include.mean = TRUE),
@@ -25,7 +26,7 @@ simulate_garch_returns <- function(fit, n) {
     if (!requireNamespace("rugarch", quietly = TRUE)) {
         stop("Package `rugarch` is required for GARCH simulation.", call. = FALSE)
     }
-
+    ## Simulate future returns based on the fitted GARCH model. This uses the last observed values as the starting point for the simulation.
     sim <- rugarch::ugarchpath(
         spec = rugarch::getspec(fit),
         n.sim = as.integer(n),

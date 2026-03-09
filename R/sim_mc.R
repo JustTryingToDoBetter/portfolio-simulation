@@ -18,7 +18,7 @@ simulate_portfolio_mvn <- function(returns_mat, weights, n_sims = 20000){
     stop("`n_sims` must be a positive scalar.", call. = FALSE)
   }
 
-  clean_mat <- returns_mat[stats::complete.cases(returns_mat), , drop = FALSE]
+  clean_mat <- returns_mat[stats::complete.cases(returns_mat), , drop = FALSE] ## 
   if (nrow(clean_mat) < 2) {
     stop("Not enough complete rows in `returns_mat` after NA filtering.", call. = FALSE)
   }
