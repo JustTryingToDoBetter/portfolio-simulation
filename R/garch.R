@@ -1,5 +1,6 @@
 # Intent: optional GARCH scaffold for per-series volatility modeling
 
+## Note: GARCH fitting and simulation can be slow, especially with many assets or long histories.
 fit_garch_series <- function(x) {
     if (!is.numeric(x) || length(x) < 50) {
         stop("`x` must be a numeric series with at least 50 observations.", call. = FALSE)
@@ -20,6 +21,9 @@ fit_garch_series <- function(x) {
 simulate_garch_returns <- function(fit, n) {
     if (!is.numeric(n) || length(n) != 1 || n < 1) {
         stop("`n` must be a positive scalar.", call. = FALSE)
+    }
+    if (!requireNamespace("rugarch", quietly = TRUE)) {
+        stop("Package `rugarch` is required for GARCH simulation.", call. = FALSE)
     }
 
     sim <- rugarch::ugarchpath(
