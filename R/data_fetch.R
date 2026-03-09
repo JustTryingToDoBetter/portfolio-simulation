@@ -16,6 +16,11 @@ cache_file_is_fresh <- function(cache_file, max_age_hours) {
     is.finite(file_age_hours) && file_age_hours <= max_age_hours
 }
 
+build_prices_cache_file <- function(tickers, from, cache_dir = "data/cache") {
+    key <- paste(sort(unique(tickers)), collapse = "_")
+    file.path(cache_dir, sprintf("prices_%s_from_%s.rds", key, from))
+}
+
 fetch_prices_yahoo <- function(
     tickers,
     from = "2018-01-01",
@@ -26,8 +31,7 @@ fetch_prices_yahoo <- function(
     stopifnot(length(tickers) >= 1)
     dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE) ## Ensure cache directory exists
     
-    key <- paste(sort(tickers), collapse = "_") ## Create a unique key for the combination of tickers
-    cache_file <- file.path(cache_dir, sprintf("prices_%s_from_%s.rds", key, from))
+    cache_file <- build_prices_cache_file(tickers = tickers, from = from, cache_dir = cache_dir)
     ## Return cache if available and still fresh
     if (!refresh_cache && cache_file_is_fresh(cache_file, cache_max_age_hours)) {
         prices <- readRDS(cache_file)
@@ -77,14 +81,15 @@ fetch_prices_yahoo_cached <- function(tickers, from, cache_dir = "data/cache") {
 
     dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
 
-    key <- paste(sort(unique(tickers)), collapse = "_")
-    cache_file <- file.path(cache_dir, sprintf("prices_%s_from_%s.rds", key, from))
+    cache_file <- build_prices_cache_file(tickers = tickers, from = from, cache_dir = cache_dir)
 
     if (file.exists(cache_file)) {
         return(readRDS(cache_file))
     }
 
     prices <- fetch_prices_yahoo(tickers = tickers, from = from, cache_dir = cache_dir)
-    saveRDS(prices, cache_file)
+    if (!file.exists(cache_file)) {
+        saveRDS(prices, cache_file)
+    }
     prices
 }
