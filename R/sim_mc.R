@@ -18,8 +18,13 @@ simulate_portfolio_mvn <- function(returns_mat, weights, n_sims = 20000){
     stop("`n_sims` must be a positive scalar.", call. = FALSE)
   }
 
-    mu <- colMeans(returns_mat) ## Estimate mean returns from historical data
-    cov <- stats::cov(returns_mat) ## Estimate covariance matrix from historical data
+  clean_mat <- returns_mat[stats::complete.cases(returns_mat), , drop = FALSE]
+  if (nrow(clean_mat) < 2) {
+    stop("Not enough complete rows in `returns_mat` after NA filtering.", call. = FALSE)
+  }
+
+    mu <- colMeans(clean_mat) ## Estimate mean returns from historical data
+    cov <- stats::cov(clean_mat) ## Estimate covariance matrix from historical data
 
   sims_asset <- MASS::mvrnorm(n = as.integer(n_sims), mu = mu, Sigma = cov) ## Simulate asset returns using MVN model
     sims_port <- as.numeric(sims_asset %*% weights) ## Compute portfolio returns from asset simulations
@@ -44,11 +49,16 @@ simulate_portfolio_bootstrap <- function(returns_mat, weights, n_sims = 20000, v
     stop("`vol_scale` must be a positive scalar.", call. = FALSE)
   }
 
-  n_obs <- nrow(returns_mat)
-  idx <- sample.int(n_obs, size = as.integer(n_sims), replace = TRUE)
-  sims_asset <- returns_mat[idx, , drop = FALSE]
+  clean_mat <- returns_mat[stats::complete.cases(returns_mat), , drop = FALSE]
+  if (nrow(clean_mat) < 2) {
+    stop("Not enough complete rows in `returns_mat` after NA filtering.", call. = FALSE)
+  }
 
-  asset_mu <- matrix(colMeans(returns_mat), nrow = nrow(sims_asset), ncol = ncol(sims_asset), byrow = TRUE)
+  n_obs <- nrow(clean_mat)
+  idx <- sample.int(n_obs, size = as.integer(n_sims), replace = TRUE)
+  sims_asset <- clean_mat[idx, , drop = FALSE]
+
+  asset_mu <- matrix(colMeans(clean_mat), nrow = nrow(sims_asset), ncol = ncol(sims_asset), byrow = TRUE)
   sims_asset_stressed <- asset_mu + (sims_asset - asset_mu) * vol_scale
 
   as.numeric(sims_asset_stressed %*% weights)
