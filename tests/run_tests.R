@@ -1,12 +1,10 @@
+library(testthat)
 
-test_files <- list.files("tests", pattern = "^test_.*\\.R$", full.names = TRUE)
+# Run the full testthat suite from the project root.
+# All tests live in tests/testthat/.
+# helper-fixtures.R is sourced automatically by test_dir() before test files.
 
-if (length(test_files) == 0) {
-  stop("No test files found in tests/", call. = FALSE)
-}
-
-for (f in test_files) {
-  source(f)
-}
-
-cat(sprintf("All tests passed (%d files).\n", length(test_files)))
+test_dir(
+  path     = "tests/testthat",
+  reporter = "progress"
+)
