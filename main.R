@@ -8,142 +8,234 @@ source("R/logging.R")
 source("R/benchmark.R")
 source("R/garch.R")
 
-set.seed(42)
+# ---------------------------------------------------------------------------
+# run_pipeline: main orchestration function
+#
+# Arguments:
+#   cfg       - named list of run parameters (validated at runtime)
+#   seed      - integer RNG seed for reproducibility
+#   fetch_fn  - price-fetch function injected for testability
+#               signature: function(tickers, from, cache_dir) -> prices tibble
+#
+# Returns:
+#   A named list (artifact) with risk estimates, backtest output, and metadata.
+# ---------------------------------------------------------------------------
+run_pipeline <- function(cfg, seed = 42L, fetch_fn = fetch_prices_yahoo_cached) {
 
-mode <- Sys.getenv("RISK_MODE", unset = "full")
-if (!(mode %in% c("quick", "full"))) {
-    log_warn("Unknown RISK_MODE=", mode, ". Falling back to full.")
-    mode <- "full"
-}
-
-cfg <- list(
-    tickers = c("AAPL", "MSFT", "GOOGL", "AMZN"),
-    weights = c(0.25, 0.25, 0.25, 0.25),
-    from = "2019-01-01",
-    alpha = 0.95, ## confidence level for VaR/CVaR
-    n_sims = if (identical(mode, "quick")) 10000L else 50000L, ## number of Monte Carlo simulations for risk estimation
-    backtest_window = 252L,
-    backtest_sims = if (identical(mode, "quick")) 20000L else 100000L, ## simulations for rolling VaR backtest (higher for more stable estimates)
-    cache_dir = "data/cache",
-    model = "bootstrap", ## "bootstrap" or "mvn" for backtest
-    vol_scale_baseline = 1.0, ## no stress
-    vol_scale_stress = 1.25, ## 25% vol increase for stress testing
-    enable_garch = FALSE 
-)
-
-if (!is.character(cfg$tickers) || length(cfg$tickers) < 1) {
+  # -- Config validation -------------------------------------------------------
+  if (!is.character(cfg$tickers) || length(cfg$tickers) < 1)
     stop("`cfg$tickers` must be a non-empty character vector.", call. = FALSE)
-}
-if (!is.numeric(cfg$weights) || length(cfg$weights) != length(cfg$tickers)) {
-    stop("`cfg$weights` must be numeric and align with tickers.", call. = FALSE)
-}
-if (abs(sum(cfg$weights) - 1) > 1e-6) {
-    stop("`cfg$weights` must sum to 1.", call. = FALSE)
-}
-if (!is.numeric(cfg$alpha) || cfg$alpha <= 0 || cfg$alpha >= 1) {
-    stop("`cfg$alpha` must be in (0,1).", call. = FALSE)
-}
+  if (!is.numeric(cfg$weights) || length(cfg$weights) != length(cfg$tickers))
+    stop("`cfg$weights` must be numeric and match length of `cfg$tickers`.", call. = FALSE)
+  if (!is.null(names(cfg$weights)) && !setequal(names(cfg$weights), cfg$tickers))
+    stop("`cfg$weights` names must match `cfg$tickers` exactly.", call. = FALSE)
+  if (abs(sum(cfg$weights) - 1) > 1e-6)
+    stop("`cfg$weights` must sum to 1 (got ", round(sum(cfg$weights), 8), ").", call. = FALSE)
+  if (!is.numeric(cfg$alpha) || length(cfg$alpha) != 1 || cfg$alpha <= 0 || cfg$alpha >= 1)
+    stop("`cfg$alpha` must be a single number in (0, 1).", call. = FALSE)
+  if (!is.numeric(cfg$n_sims) || length(cfg$n_sims) != 1 || cfg$n_sims < 1)
+    stop("`cfg$n_sims` must be a positive scalar.", call. = FALSE)
+  if (!is.numeric(cfg$backtest_window) || length(cfg$backtest_window) != 1 || cfg$backtest_window < 20)
+    stop("`cfg$backtest_window` must be >= 20.", call. = FALSE)
+  if (!is.numeric(cfg$backtest_sims) || length(cfg$backtest_sims) != 1 || cfg$backtest_sims < 1000)
+    stop("`cfg$backtest_sims` must be >= 1000.", call. = FALSE)
+  if (!is.numeric(cfg$vol_scale_stress) || length(cfg$vol_scale_stress) != 1 || cfg$vol_scale_stress <= 0)
+    stop("`cfg$vol_scale_stress` must be a positive scalar.", call. = FALSE)
+  if (!is.character(cfg$from) || length(cfg$from) != 1 || nchar(cfg$from) == 0)
+    stop("`cfg$from` must be a non-empty date string.", call. = FALSE)
+  valid_models <- c("bootstrap", "mvn")
+  if (!is.character(cfg$model) || !(cfg$model %in% valid_models))
+    stop("`cfg$model` must be one of: ", paste(valid_models, collapse = ", "), ".", call. = FALSE)
 
-log_info("run_mode=", mode)
-log_info("seed=42")
+  set.seed(as.integer(seed))
 
-bench <- list()
+  run_ts     <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
+  git_commit <- tryCatch(
+    trimws(system("git rev-parse --short HEAD", intern = TRUE)),
+    error   = function(e) NA_character_,
+    warning = function(e) NA_character_
+  )
 
-bench[[length(bench) + 1]] <- time_it("fetch_prices", {
-    fetch_prices_yahoo_cached(cfg$tickers, from = cfg$from, cache_dir = cfg$cache_dir)
-})
-prices <- bench[[length(bench)]]$value
+  log_info("run_pipeline seed=", seed, " tickers=", paste(cfg$tickers, collapse = ","))
+  bench <- list()
 
-bench[[length(bench) + 1]] <- time_it("compute_returns", {
+  # -- Fetch prices ------------------------------------------------------------
+  bench[[length(bench) + 1]] <- time_it("fetch_prices", {
+    fetch_fn(cfg$tickers, from = cfg$from, cache_dir = cfg$cache_dir)
+  })
+  prices <- bench[[length(bench)]]$value
+
+  # -- Compute log returns and build wide matrix -------------------------------
+  bench[[length(bench) + 1]] <- time_it("compute_returns", {
     rets <- compute_log_returns(prices)
     returns_wide_matrix(rets)
-})
-mat <- bench[[length(bench)]]$value
+  })
+  mat <- bench[[length(bench)]]$value
 
-if (ncol(mat) != length(cfg$weights)) {
-    stop("Returns matrix columns and weights length must match.", call. = FALSE)
-}
+  # -- Returns matrix validation -----------------------------------------------
+  if (!is.matrix(mat))
+    stop("Returns matrix must be a matrix.", call. = FALSE)
+  missing_tickers <- setdiff(cfg$tickers, colnames(mat))
+  if (length(missing_tickers) > 0)
+    stop("Returns matrix is missing columns: ", paste(missing_tickers, collapse = ", "), ".", call. = FALSE)
 
-bench[[length(bench) + 1]] <- time_it("simulate_mvn", {
-    simulate_portfolio_mvn(mat, cfg$weights, n_sims = cfg$n_sims)
-})
-sim_mvn <- bench[[length(bench)]]$value
+  # Reorder columns to cfg$tickers order so positional weight alignment is safe.
+  mat <- mat[, cfg$tickers, drop = FALSE]
 
-bench[[length(bench) + 1]] <- time_it("simulate_bootstrap", {
-    simulate_portfolio_bootstrap(mat, cfg$weights, n_sims = cfg$n_sims, vol_scale = cfg$vol_scale_baseline)
-})
-sim_boot <- bench[[length(bench)]]$value
+  if (any(!is.finite(mat)))
+    stop("Returns matrix contains NA/NaN/Inf values.", call. = FALSE)
+  if (nrow(mat) <= cfg$backtest_window)
+    stop("Not enough rows in returns matrix (", nrow(mat),
+         ") for backtest window (", cfg$backtest_window, ").", call. = FALSE)
 
-bench[[length(bench) + 1]] <- time_it("risk_metrics", {
+  # Resolve weights: use names when provided (subset + reorder), else positional.
+  weights <- if (!is.null(names(cfg$weights))) {
+    as.numeric(cfg$weights[cfg$tickers])
+  } else {
+    as.numeric(cfg$weights)
+  }
+
+  log_info("matrix rows=", nrow(mat), " cols=", paste(colnames(mat), collapse = ","))
+
+  # -- MVN simulation ----------------------------------------------------------
+  bench[[length(bench) + 1]] <- time_it("simulate_mvn", {
+    simulate_portfolio_mvn(mat, weights, n_sims = cfg$n_sims)
+  })
+  sim_mvn <- bench[[length(bench)]]$value
+
+  # -- Bootstrap simulation (baseline vol) -------------------------------------
+  bench[[length(bench) + 1]] <- time_it("simulate_bootstrap", {
+    simulate_portfolio_bootstrap(mat, weights, n_sims = cfg$n_sims,
+                                 vol_scale = cfg$vol_scale_baseline)
+  })
+  sim_boot <- bench[[length(bench)]]$value
+
+  # -- Risk metrics: MVN and bootstrap -----------------------------------------
+  bench[[length(bench) + 1]] <- time_it("risk_metrics", {
     list(
-        mvn = var_cvar(sim_mvn, alpha = cfg$alpha),
-        bootstrap = var_cvar(sim_boot, alpha = cfg$alpha)
+      mvn       = var_cvar(sim_mvn,  alpha = cfg$alpha),
+      bootstrap = var_cvar(sim_boot, alpha = cfg$alpha)
     )
-})
-risk_pair <- bench[[length(bench)]]$value
-risk_mvn <- risk_pair$mvn
-risk_boot <- risk_pair$bootstrap
+  })
+  risk_pair <- bench[[length(bench)]]$value
+  risk_mvn  <- risk_pair$mvn
+  risk_boot <- risk_pair$bootstrap
 
-sim_boot_stress <- simulate_portfolio_bootstrap(
-    mat,
-    cfg$weights,
-    n_sims = cfg$n_sims,
-    vol_scale = cfg$vol_scale_stress
-)
-risk_boot_stress <- var_cvar(sim_boot_stress, alpha = cfg$alpha)
+  # -- Stress simulation (scaled bootstrap) ------------------------------------
+  bench[[length(bench) + 1]] <- time_it("sim_boot_stress", {
+    simulate_portfolio_bootstrap(mat, weights, n_sims = cfg$n_sims,
+                                 vol_scale = cfg$vol_scale_stress)
+  })
+  sim_boot_stress <- bench[[length(bench)]]$value
 
-bench[[length(bench) + 1]] <- time_it("rolling_var_backtest", {
+  bench[[length(bench) + 1]] <- time_it("risk_boot_stress", {
+    var_cvar(sim_boot_stress, alpha = cfg$alpha)
+  })
+  risk_boot_stress <- bench[[length(bench)]]$value
+
+  # -- Rolling VaR backtest ----------------------------------------------------
+  bench[[length(bench) + 1]] <- time_it("rolling_var_backtest", {
     backtest_var(
-        returns_mat = mat,
-        weights = cfg$weights,
-        window = cfg$backtest_window,
-        alpha = cfg$alpha,
-        model = cfg$model,
-        n_sims = cfg$backtest_sims
+      returns_mat = mat,
+      weights     = weights,
+      window      = cfg$backtest_window,
+      alpha       = cfg$alpha,
+      model       = cfg$model,
+      n_sims      = cfg$backtest_sims
     )
-})
-bt <- bench[[length(bench)]]$value
-kupiec <- kupiec_uc_test(bt$breaches, alpha = cfg$alpha)
+  })
+  bt     <- bench[[length(bench)]]$value
+  kupiec <- kupiec_uc_test(bt$breaches, alpha = cfg$alpha)
 
-garch_result <- NULL
-if (isTRUE(cfg$enable_garch)) {
+  log_info("MVN VaR=", round(risk_mvn$VaR, 6), " CVaR=", round(risk_mvn$CVaR, 6))
+  log_info("Bootstrap VaR=", round(risk_boot$VaR, 6), " CVaR=", round(risk_boot$CVaR, 6))
+  log_info("Stress VaR=", round(risk_boot_stress$VaR, 6), " CVaR=", round(risk_boot_stress$CVaR, 6))
+  log_info("breach_rate=", round(bt$breach_rate, 6), " expected=", round(1 - cfg$alpha, 6))
+  log_info("kupiec_p=", round(kupiec$p_value, 6))
+
+  # -- Optional GARCH ----------------------------------------------------------
+  garch_result <- NULL
+  if (isTRUE(cfg$enable_garch)) {
     if (!requireNamespace("rugarch", quietly = TRUE)) {
-        log_warn("enable_garch=TRUE but package `rugarch` is not installed. Skipping GARCH.")
+      log_warn("enable_garch=TRUE but `rugarch` is not installed. Skipping GARCH.")
     } else {
-        fits <- lapply(seq_len(ncol(mat)), function(j) fit_garch_series(mat[, j]))
-        sims <- vapply(fits, function(fit) simulate_garch_returns(fit, n = cfg$n_sims), numeric(cfg$n_sims))
-        if (!is.matrix(sims)) {
-            sims <- matrix(sims, ncol = length(cfg$weights))
-        }
-        garch_port <- as.numeric(sims %*% cfg$weights)
-        garch_result <- var_cvar(garch_port, alpha = cfg$alpha)
-        log_info("garch VaR=", round(garch_result$VaR, 6), " CVaR=", round(garch_result$CVaR, 6))
+      garch_result <- tryCatch({
+        fits      <- lapply(seq_len(ncol(mat)), function(j) fit_garch_series(mat[, j]))
+        sims_list <- lapply(seq_along(fits), function(j) {
+          s <- simulate_garch_returns(fits[[j]], n = cfg$n_sims)
+          if (!is.numeric(s) || length(s) != cfg$n_sims || !all(is.finite(s)))
+            stop("GARCH simulation for column ", j, " returned invalid values.")
+          s
+        })
+        sims_mat   <- do.call(cbind, sims_list)
+        garch_port <- as.numeric(sims_mat %*% weights)
+        g_risk     <- var_cvar(garch_port, alpha = cfg$alpha)
+        log_info("garch VaR=", round(g_risk$VaR, 6), " CVaR=", round(g_risk$CVaR, 6))
+        g_risk
+      }, error = function(e) {
+        log_warn("GARCH failed: ", conditionMessage(e), ". Skipping GARCH results.")
+        NULL
+      })
     }
-}
+  }
 
-timings <- summarize_benchmarks(bench)
-print(timings)
+  # -- Timings -----------------------------------------------------------------
+  timings <- summarize_benchmarks(bench)
+  print(timings)
 
-log_info("MVN risk VaR=", round(risk_mvn$VaR, 6), " CVaR=", round(risk_mvn$CVaR, 6))
-log_info("Bootstrap risk VaR=", round(risk_boot$VaR, 6), " CVaR=", round(risk_boot$CVaR, 6))
-log_info("Bootstrap stress (vol_scale=", cfg$vol_scale_stress, ") VaR=", round(risk_boot_stress$VaR, 6), " CVaR=", round(risk_boot_stress$CVaR, 6))
-log_info("Observed breach rate=", round(bt$breach_rate, 6), " expected=", round(1 - cfg$alpha, 6))
-log_info("Kupiec p_value=", round(kupiec$p_value, 6))
-
-if (!dir.exists("outputs")) {
-    dir.create("outputs", recursive = TRUE)
-}
-
-run_artifact <- list(
-    cfg = cfg,
-    risk_mvn = risk_mvn,
-    risk_boot = risk_boot,
+  # -- Build and save artifact -------------------------------------------------
+  artifact <- list(
+    cfg              = cfg,
+    seed             = as.integer(seed),
+    run_timestamp    = run_ts,
+    git_commit       = git_commit,
+    session_info     = sessionInfo(),
+    matrix_cols      = colnames(mat),
+    n_obs            = nrow(mat),
+    date_range       = if (!is.null(rownames(mat))) range(rownames(mat)) else NA,
+    risk_mvn         = risk_mvn,
+    risk_boot        = risk_boot,
     risk_boot_stress = risk_boot_stress,
-    backtest = bt,
-    kupiec = kupiec,
-    timings = timings,
-    garch = garch_result
-)
+    backtest         = bt,
+    kupiec           = kupiec,
+    timings          = timings,
+    garch            = garch_result
+  )
 
-saveRDS(run_artifact, file = "outputs/latest_run.rds")
-log_info("artifact=outputs/latest_run.rds")
+  if (!dir.exists("outputs"))
+    dir.create("outputs", recursive = TRUE)
+
+  saveRDS(artifact, file = "outputs/latest_run.rds")
+  log_info("artifact=outputs/latest_run.rds")
+  invisible(artifact)
+}
+
+# ---------------------------------------------------------------------------
+# Script entrypoint: runs when executed directly, not when sourced by tests.
+# sys.nframe() == 0L is TRUE only at the top level (Rscript or source at console).
+# ---------------------------------------------------------------------------
+if (sys.nframe() == 0L) {
+  mode <- Sys.getenv("RISK_MODE", unset = "full")
+  if (!(mode %in% c("quick", "full"))) {
+    log_warn("Unknown RISK_MODE=", mode, ". Falling back to full.")
+    mode <- "full"
+  }
+  log_info("run_mode=", mode)
+
+  cfg <- list(
+    tickers            = c("AAPL", "MSFT", "GOOGL", "AMZN"),
+    weights            = c(AAPL = 0.25, MSFT = 0.25, GOOGL = 0.25, AMZN = 0.25),
+    from               = "2019-01-01",
+    alpha              = 0.95,
+    n_sims             = if (identical(mode, "quick")) 10000L else 50000L,
+    backtest_window    = 252L,
+    backtest_sims      = if (identical(mode, "quick")) 20000L else 100000L,
+    cache_dir          = "data/cache",
+    model              = "bootstrap",
+    vol_scale_baseline = 1.0,
+    vol_scale_stress   = 1.25,
+    enable_garch       = FALSE
+  )
+
+  run_pipeline(cfg, seed = 42L)
+}
