@@ -49,6 +49,19 @@ run_pipeline <- function(cfg, seed = 42L, fetch_fn = fetch_prices_yahoo_cached) 
 
   set.seed(as.integer(seed))
 
+  resolve_date_range <- function(index_values) {
+    if (is.null(index_values) || length(index_values) == 0) {
+      return(c(NA_character_, NA_character_))
+    }
+
+    parsed_dates <- suppressWarnings(as.Date(index_values))
+    if (all(!is.na(parsed_dates))) {
+      return(as.character(range(parsed_dates)))
+    }
+
+    c(as.character(index_values[[1]]), as.character(index_values[[length(index_values)]]))
+  }
+
   run_ts     <- format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z")
   git_commit <- tryCatch(
     trimws(system("git rev-parse --short HEAD", intern = TRUE)),
@@ -146,6 +159,11 @@ run_pipeline <- function(cfg, seed = 42L, fetch_fn = fetch_prices_yahoo_cached) 
   })
   bt     <- bench[[length(bench)]]$value
   kupiec <- kupiec_uc_test(bt$breaches, alpha = cfg$alpha)
+  christoffersen <- if (length(bt$breaches) >= 2) {
+    christoffersen_cc_test(bt$breaches, alpha = cfg$alpha)
+  } else {
+    NULL
+  }
 
   log_info("MVN VaR=", round(risk_mvn$VaR, 6), " CVaR=", round(risk_mvn$CVaR, 6))
   log_info("Bootstrap VaR=", round(risk_boot$VaR, 6), " CVaR=", round(risk_boot$CVaR, 6))
@@ -155,8 +173,16 @@ run_pipeline <- function(cfg, seed = 42L, fetch_fn = fetch_prices_yahoo_cached) 
 
   # -- Optional GARCH ----------------------------------------------------------
   garch_result <- NULL
+  garch_sims <- NULL
+  garch_status <- list(
+    enabled = isTRUE(cfg$enable_garch),
+    succeeded = FALSE,
+    message = if (isTRUE(cfg$enable_garch)) NULL else "disabled"
+  )
+
   if (isTRUE(cfg$enable_garch)) {
     if (!requireNamespace("rugarch", quietly = TRUE)) {
+      garch_status$message <- "`rugarch` is not installed"
       log_warn("enable_garch=TRUE but `rugarch` is not installed. Skipping GARCH.")
     } else {
       garch_result <- tryCatch({
@@ -169,10 +195,14 @@ run_pipeline <- function(cfg, seed = 42L, fetch_fn = fetch_prices_yahoo_cached) 
         })
         sims_mat   <- do.call(cbind, sims_list)
         garch_port <- as.numeric(sims_mat %*% weights)
+        garch_sims <<- garch_port
         g_risk     <- var_cvar(garch_port, alpha = cfg$alpha)
+        garch_status$succeeded <<- TRUE
+        garch_status$message <<- "ok"
         log_info("garch VaR=", round(g_risk$VaR, 6), " CVaR=", round(g_risk$CVaR, 6))
         g_risk
       }, error = function(e) {
+        garch_status$message <<- conditionMessage(e)
         log_warn("GARCH failed: ", conditionMessage(e), ". Skipping GARCH results.")
         NULL
       })
@@ -192,14 +222,39 @@ run_pipeline <- function(cfg, seed = 42L, fetch_fn = fetch_prices_yahoo_cached) 
     session_info     = sessionInfo(),
     matrix_cols      = colnames(mat),
     n_obs            = nrow(mat),
-    date_range       = if (!is.null(rownames(mat))) range(rownames(mat)) else NA,
+    date_range       = resolve_date_range(rownames(mat)),
+    sample_metadata  = list(
+      tickers = cfg$tickers,
+      weights = weights,
+      start_date = resolve_date_range(rownames(mat))[[1]],
+      end_date = resolve_date_range(rownames(mat))[[2]],
+      n_obs = nrow(mat),
+      alpha = cfg$alpha,
+      backtest_model = cfg$model,
+      run_timestamp = run_ts,
+      seed = as.integer(seed)
+    ),
+    model_metrics    = list(
+      mvn = risk_mvn,
+      bootstrap = risk_boot,
+      stress_bootstrap = risk_boot_stress,
+      garch = garch_result
+    ),
+    simulations      = list(
+      mvn = sim_mvn,
+      bootstrap = sim_boot,
+      stress_bootstrap = sim_boot_stress,
+      garch = garch_sims
+    ),
     risk_mvn         = risk_mvn,
     risk_boot        = risk_boot,
     risk_boot_stress = risk_boot_stress,
     backtest         = bt,
     kupiec           = kupiec,
+    christoffersen   = christoffersen,
     timings          = timings,
-    garch            = garch_result
+    garch            = garch_result,
+    garch_status     = garch_status
   )
 
   if (!dir.exists("outputs"))

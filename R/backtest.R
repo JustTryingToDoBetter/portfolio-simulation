@@ -29,6 +29,7 @@ backtest_var <- function(returns_mat, weights, window = 252, alpha = 0.95, model
 	}
 
 	n <- nrow(clean_mat)
+	date_index <- rownames(clean_mat)
 	eval_idx <- seq.int(window + 1, n)
 	vars <- numeric(length(eval_idx))
 	port_ret <- numeric(length(eval_idx))
@@ -48,14 +49,33 @@ backtest_var <- function(returns_mat, weights, window = 252, alpha = 0.95, model
 	}
 
 	breaches <- (-port_ret) > vars
+	eval_dates <- NULL
+	if (!is.null(date_index)) {
+		eval_dates <- date_index[eval_idx]
+		parsed_dates <- suppressWarnings(as.Date(eval_dates))
+		if (all(!is.na(parsed_dates))) {
+			eval_dates <- parsed_dates
+		}
+	}
 
 	list(
 		breach_rate = mean(breaches),
 		breach_count = sum(breaches),
 		total_tested = length(breaches),
 		vars = vars,
+		var_series = vars,
 		port_ret = port_ret,
-		breaches = breaches
+		realized_return = port_ret,
+		realized_loss = -port_ret,
+		breaches = breaches,
+		breach_indicator = as.integer(breaches),
+		evaluation_index = eval_idx,
+		dates = eval_dates,
+		model = model,
+		alpha = alpha,
+		window = as.integer(window),
+		n_sims = as.integer(n_sims),
+		expected_breach_rate = 1 - alpha
 	)
 }
 
